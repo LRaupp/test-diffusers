@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa com Captura de Tela</title>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" rel="stylesheet">
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; }
+        #map-container { position: relative; width: 100%; height: 100vh; }
+        .map-instance { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; }
+        #map-realistic { opacity: 1; z-index: 1; }
+        .floating-button {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.3);
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="map-container">
+        <div id="map-realistic" class="map-instance"></div>
+        <div id="map-ade20k" class="map-instance"></div>
+        <div id="map-depth" class="map-instance"></div>
+    </div>
+    <button class="floating-button">Capturar Mapas</button>
+    
+    <script>
+        mapboxgl.accessToken = 'pk.eyJ1Ijoib3NwYS1wbGFjZSIsImEiOiJjbGZ2aTRiYXkwN2RxM3NubHNxeDN4MGF5In0.ZYS5Fz4yTv3OunFRDOGniA';
+        
+        var styles = {
+            "REALISTIC": "mapbox://styles/ospa-place/cm75d3vcy00ik01s30m5l48ai",
+            "ADE20K": "mapbox://styles/ospa-place/clj1q79oz01b101qi6zdzcvre",
+            "DEPTH": "mapbox://styles/ospa-place/cm758sxzf018a01s16iqqewnj"
+        };
+
+        var center = [-46.6569, -23.562631];
+        var zoom = 16.7;
+        var bearing = 12;
+        var pitch = 58;
+
+        var maps = {
+            "REALISTIC": new mapboxgl.Map({ container: 'map-realistic', style: styles["REALISTIC"], center, zoom, bearing, pitch, preserveDrawingBuffer: true }),
+            "ADE20K": new mapboxgl.Map({ container: 'map-ade20k', style: styles["ADE20K"], center, zoom, bearing, pitch, preserveDrawingBuffer: true }),
+            "DEPTH": new mapboxgl.Map({ container: 'map-depth', style: styles["DEPTH"], center, zoom, bearing, pitch, preserveDrawingBuffer: true })
+        };
+        
+        function captureMap(styleKey) {
+            return new Promise((resolve) => {
+                setTimeout(() => {
+                    var img = maps[styleKey].getCanvas().toDataURL("image/png");
+                    var link = document.createElement('a');
+                    link.href = img;
+                    link.download = `mapa_${styleKey}.png`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    resolve();
+                }, 2000);
+            });
+        }
+        
+        $('button').click(async function() {
+            await captureMap("REALISTIC");
+            await captureMap("ADE20K");
+            await captureMap("DEPTH");
+        });
+    </script>
+</body>
+</html>
