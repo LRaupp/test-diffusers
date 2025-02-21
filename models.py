@@ -44,7 +44,7 @@ class ControlModes:
 class CNHFModel:
     segment_model:str
     depth_model:str
-    edge_model:str
+    canny_model:str
     tile_model:str
     union_model:str
     union_input_order: Tuple[Tuple[str]]
@@ -68,7 +68,7 @@ class CNHFModel:
 class ControlNetSD1_5Model(CNHFModel):
     segment_model = "lllyasviel/control_v11p_sd15_seg"
     depth_model = "lllyasviel/control_v11f1p_sd15_depth"
-    edge_model = "lllyasviel/control_v11p_sd15_canny"
+    canny_model = "lllyasviel/control_v11p_sd15_canny"
     tile_model = "lllyasviel/control_v11p_sd15_tile"
     loader = ControlNetModel
 
@@ -83,6 +83,7 @@ class ControlNetSDXL(CNHFModel):
         (ControlModes.normal,),
         (ControlModes.segment,)
     )
+    loader = ControlNetModel
 
 
 class FluxV1_DevControlNet(CNHFModel):
@@ -100,11 +101,14 @@ class FluxV1_DevControlNet(CNHFModel):
 
 
 # StableDiffusion
-class SDHFModel:
-    model:str
+class SDModel:
     controlnet_model: CNHFModel
     pipeline_loader: DiffusionPipeline
     cn_pipeline_loader: DiffusionPipeline
+
+
+class SDHFModel(SDModel):
+    model:str
 
 
 class SD1_5Model(SDHFModel):
@@ -210,7 +214,8 @@ class PlaceDiffusionModel:
                  vae_model:str="stabilityai/sd-vae-ft-mse", 
                  pipeline_extra_kwargs:dict={},
                  controlnet_images:Tuple[Tuple[Any, str]]=None,
-                 lora_model:LocalLoraModel=None
+                 lora_model:LocalLoraModel=None,
+                 use_dpm_scheduler:bool=True
         ):
         """
         :param base_diffusion_model: Modelo diffuser a ser utilizado. Se lora_model for definido, este modelo é ignorado.
@@ -233,6 +238,8 @@ class PlaceDiffusionModel:
 
         self.lora_model = lora_model
 
+        self.use_dpm_scheduler = use_dpm_scheduler
+
     @property
     def base_diffusion_model(self):
         if self.lora_model:
@@ -252,7 +259,7 @@ class PlaceDiffusionModel:
 
     @property
     def device_name(self):
-        return torch.device("gpu") if torch.cuda.is_available() else torch.device("cpu")
+        return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     
     @property
     def default_pipeline_kwargs(self):
@@ -308,7 +315,8 @@ class PlaceDiffusionModel:
                 self._pipeline.load_lora_weights(self.lora_model.full_model_path)
                 self._pipeline.fuse_lora()
             
-            self._pipeline.scheduler = DPMSolverMultistepScheduler.from_config(self._pipeline.scheduler.config)
+            if self.use_dpm_scheduler:
+                self._pipeline.scheduler = DPMSolverMultistepScheduler.from_config(self._pipeline.scheduler.config)
 
             # Melhora eficiência
             self._pipeline.to(self.device_name)
