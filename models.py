@@ -208,6 +208,12 @@ class JZCGXL026(LocalLoraModel):
     reference_url = "https://civitai.com/models/363965/jzcgxl026-aerial-view"
 
 
+class UrbanRealisticCityBirdsEyeView(LocalLoraModel):
+    model_file = "urbanrealistic_v1.safetensors"
+    base_model = SD1_5Model
+    reference_url = "https://civitai.com/models/104689/urbanrealistic"
+
+
 class PlaceDiffusionModel:
     def __init__(self, 
                  base_diffusion_model:SDHFModel=None, 
