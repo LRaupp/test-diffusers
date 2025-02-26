@@ -2,4 +2,5 @@ diffusers==0.32.2
 opencv-python==4.11.0.86
 torch==2.5.1 # https://pytorch.org/get-started/previous-versions/#wheel
 torchvision==0.20.1
+compel==2.0.3
 xformers==0.0.28.post3 # torch>2.6.0

@@ -6,10 +6,11 @@ from diffusers import (
     StableDiffusionControlNetPipeline, ControlNetModel, 
     StableDiffusionPipeline, ModelMixin, FluxControlNetModel, 
     FluxPipeline, FluxControlNetPipeline, DiffusionPipeline,
-    DPMSolverMultistepScheduler)
+    DPMSolverMultistepScheduler, ControlNetUnionModel,
+    StableDiffusionXLControlNetUnionPipeline, StableDiffusionXLPipeline)
 
 from typing import Literal, Tuple, Any, List
-
+from compel import Compel
 
 
 # https://docs.google.com/spreadsheets/d/1se8YEtb2detS7OuPE86fXGyD269pMycAWe2mtKUj2W8/edit?gid=0#gid=0
@@ -83,7 +84,7 @@ class ControlNetSDXL(CNHFModel):
         (ControlModes.normal,),
         (ControlModes.segment,)
     )
-    loader = ControlNetModel
+    loader = ControlNetUnionModel
 
 
 class FluxV1_DevControlNet(CNHFModel):
@@ -121,8 +122,8 @@ class SD1_5Model(SDHFModel):
 class SDXL1(SDHFModel):
     model = "stabilityai/stable-diffusion-xl-base-1.0"
     controlnet_model = ControlNetSDXL
-    pipeline_loader = StableDiffusionPipeline
-    cn_pipeline_loader = StableDiffusionControlNetPipeline
+    pipeline_loader = StableDiffusionXLPipeline
+    cn_pipeline_loader = StableDiffusionXLControlNetUnionPipeline
 
 
 class FluxV1_Dev(SDHFModel):
@@ -328,3 +329,7 @@ class PlaceDiffusionModel:
                 print(e)
 
         return self._pipeline
+
+    @property
+    def pipe_compel(self):
+        return Compel(tokenizer=self.pipeline.tokenizer, text_encoder=self.pipeline.text_encoder)
