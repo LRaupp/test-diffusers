@@ -277,6 +277,8 @@ class PlaceDiffusionModel:
                  controlnet_images:Tuple[Tuple[Any, str]]=None,
                  lora_model:LocalLoraModel=None,
                  use_dpm_scheduler:bool=True,
+                 use_vae:bool=True,
+                 optimize_pipe:bool=True,
                  low_vram:bool=False
         ):
         """
@@ -286,7 +288,10 @@ class PlaceDiffusionModel:
         :param lora_model: LoRa model utilizado junto ao diffuser. Nesse caso, o base_diffusion_model é ignorado e é utilizado o modelo definido dentro do Modelo de LoRa.
 
         """
+        self.use_vae = use_vae
         self._vae = None
+
+        self.optimize_pipe = optimize_pipe
 
         self._pipeline:DiffusionPipeline = None
         self.pipeline_extra_kwargs = pipeline_extra_kwargs
@@ -311,7 +316,7 @@ class PlaceDiffusionModel:
     @property
     def vae(self):
         if self._vae is None:
-            if self.base_diffusion_model.vae_model:
+            if self.base_diffusion_model.vae_model and self.use_vae:
                 self._vae = self.base_diffusion_model.vae_model.load(torch_dtype=self.torch_dtype)
         
         return self._vae
@@ -383,21 +388,22 @@ class PlaceDiffusionModel:
             if self.use_dpm_scheduler:
                 self._pipeline.scheduler = DPMSolverMultistepScheduler.from_config(self._pipeline.scheduler.config)
 
-            # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
-            if version.parse(torch.__version__) > version.parse("2.0"):
-                self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
-            
-            if self.low_vram:
-                self._pipeline.enable_model_cpu_offload()
-            else:
-                self._pipeline.to(self.device_name)
-            
-            self._pipeline.enable_vae_slicing()
-            
-            try:
-                self._pipeline.enable_xformers_memory_efficient_attention()
-            except Exception as e:
-                print(e)
+            if self.optimize_pipe:
+                # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
+                if version.parse(torch.__version__) > version.parse("2.0"):
+                    self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
+                
+                if self.low_vram:
+                    self._pipeline.enable_model_cpu_offload()
+                else:
+                    self._pipeline.to(self.device_name)
+                
+                self._pipeline.enable_vae_slicing()
+                
+                try:
+                    self._pipeline.enable_xformers_memory_efficient_attention()
+                except Exception as e:
+                    print(e)
 
         return self._pipeline
 
