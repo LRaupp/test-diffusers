@@ -341,7 +341,20 @@ class PlaceDiffusionModel:
     @property
     def control_modes(self):
         return [m for i, m in self.controlnet_images]
-    
+
+    @property
+    def valid_control_ref_images(self):
+        """Imagens presentes no input controlnet_images. Exclui 0 (usado para informar que o control dessa posição não foi inputado) da listagem."""
+        return [i for i, m in self.controlnet_images if not isinstance(i, int)]
+
+    @property
+    def valid_control_modes_index(self):
+        """
+        Índice das imagens válidas passadas em controlnet_images. 
+        Como se espera que a listagem passada segue a ordem solicitada pelo modelo, o índice é o mesmo indicado no modelo para o control_mode.
+        """
+        return [m for i, m in self.controlnet_images if not isinstance(i, int)]
+
     @property
     def control_ref_images(self):
         return [i for i, m in self.controlnet_images]
