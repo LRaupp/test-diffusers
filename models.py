@@ -403,11 +403,15 @@ class PlaceDiffusionModel:
 
             if self.optimize_pipe:
                 # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
-                if version.parse(torch.__version__) > version.parse("2.0"):
+                if version.parse(torch.__version__) >= version.parse("2.0"):
                     self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
                 
                 if self.low_vram:
-                    self._pipeline.enable_model_cpu_offload()
+                    try:
+                        self._pipeline.enable_model_cpu_offload()
+                    except Exception as e:
+                        print(f"Error on trying to use 'enable_model_cpu_offload'. Going back to {self.device_name}.\nError:{e}")
+                        self._pipeline.to(self.device_name)
                 else:
                     self._pipeline.to(self.device_name)
                 
