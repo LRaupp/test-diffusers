@@ -1,5 +1,6 @@
 import os
 import torch
+import requests
 
 from diffusers.models import AutoencoderKL
 from diffusers import (
@@ -7,11 +8,12 @@ from diffusers import (
     StableDiffusionPipeline, ModelMixin, FluxControlNetModel, 
     FluxPipeline, FluxControlNetPipeline, DiffusionPipeline,
     DPMSolverMultistepScheduler, ControlNetUnionModel,
-    StableDiffusionXLControlNetUnionPipeline, StableDiffusionXLPipeline)
+    StableDiffusionXLControlNetUnionPipeline, StableDiffusionXLPipeline,
+    DiffusionPipeline)
 
 from typing import Literal, Tuple, Any, List
 from compel import Compel
-
+from packaging import version
 
 # https://docs.google.com/spreadsheets/d/1se8YEtb2detS7OuPE86fXGyD269pMycAWe2mtKUj2W8/edit?gid=0#gid=0
 # ADE20K Class -> Roads -> #8C8C8C
@@ -101,29 +103,59 @@ class FluxV1_DevControlNet(CNHFModel):
     loader = FluxControlNetModel
 
 
+# VAE
+class VaeModel:
+    model:str
+
+    @classmethod
+    def load(cls, torch_dtype):
+        return AutoencoderKL.from_pretrained(cls.model, torch_dtype=torch_dtype)
+
+
+class SDVaeFTMSE(VaeModel):
+    model = "stabilityai/sd-vae-ft-mse"
+
+
+class SDXLVaeFP16(VaeModel):
+    model = "madebyollin/sdxl-vae-fp16-fix"
+
+
 # StableDiffusion
 class SDModel:
     controlnet_model: CNHFModel
+    vae_model: VaeModel | None = None
     pipeline_loader: DiffusionPipeline
     cn_pipeline_loader: DiffusionPipeline
+    pipe_extra_kwargs: dict | None = {}
 
 
 class SDHFModel(SDModel):
+    """Modelo carregado do HuggingFace"""
     model:str
 
 
 class SD1_5Model(SDHFModel):
     model = "runwayml/stable-diffusion-v1-5"
     controlnet_model = ControlNetSD1_5Model
+    vae_model = SDVaeFTMSE
     pipeline_loader = StableDiffusionPipeline
     cn_pipeline_loader = StableDiffusionControlNetPipeline
-    
+
 
 class SDXL1(SDHFModel):
     model = "stabilityai/stable-diffusion-xl-base-1.0"
     controlnet_model = ControlNetSDXL
+    vae_model = SDXLVaeFP16
     pipeline_loader = StableDiffusionXLPipeline
     cn_pipeline_loader = StableDiffusionXLControlNetUnionPipeline
+    pipe_extra_kwargs = {
+        "variant": "fp16", 
+        "use_safetensors": True
+    }
+
+
+class SDXL1Refiner(SDXL1):
+    model = "stabilityai/stable-diffusion-xl-refiner-1.0"
 
 
 class FluxV1_Dev(SDHFModel):
@@ -155,16 +187,33 @@ class RealisticVisionV6(SD1_5Model):
 
 #LoRa
 class LocalLoraModel:
-    model_file:str 
-    base_model:str
-    reference_url:str
+    model_file: str
+    base_model: str
+    reference_url: str
+    download_url: str
     
-    def __init__(self, base_local_path:str) -> None:
+    def __init__(self, base_local_path: str) -> None:
         self.base_local_path = base_local_path
     
+    def _download_model(self):
+        if not os.path.exists(self.full_model_path):
+            print(f"Downloading model from {self.download_url} to {self.full_model_path}...")
+            response = requests.get(self.download_url, stream=True)
+            response.raise_for_status()
+            
+            os.makedirs(self.base_local_path, exist_ok=True)
+            with open(self.full_model_path, "wb") as file:
+                for chunk in response.iter_content(chunk_size=8192):
+                    file.write(chunk)
+            print("Download complete.")
+
     @property
     def full_model_path(self):
         return os.path.join(self.base_local_path, self.model_file)
+    
+    def __call__(self):
+        self._download_model()
+        return self.full_model_path
 
 
 class ABirdsEyeViewOfArchitectureV1(LocalLoraModel):
@@ -224,11 +273,11 @@ class BirdsEyeViewUrbanDesignScenes(LocalLoraModel):
 class PlaceDiffusionModel:
     def __init__(self, 
                  base_diffusion_model:SDHFModel=None, 
-                 vae_model:str="stabilityai/sd-vae-ft-mse", 
                  pipeline_extra_kwargs:dict={},
                  controlnet_images:Tuple[Tuple[Any, str]]=None,
                  lora_model:LocalLoraModel=None,
-                 use_dpm_scheduler:bool=True
+                 use_dpm_scheduler:bool=True,
+                 low_vram:bool=False
         ):
         """
         :param base_diffusion_model: Modelo diffuser a ser utilizado. Se lora_model for definido, este modelo é ignorado.
@@ -238,9 +287,8 @@ class PlaceDiffusionModel:
 
         """
         self._vae = None
-        self.vae_model = vae_model
 
-        self._pipeline = None
+        self._pipeline:DiffusionPipeline = None
         self.pipeline_extra_kwargs = pipeline_extra_kwargs
 
         self._input_base_diffusion_model = base_diffusion_model
@@ -252,6 +300,7 @@ class PlaceDiffusionModel:
         self.lora_model = lora_model
 
         self.use_dpm_scheduler = use_dpm_scheduler
+        self.low_vram = low_vram
 
     @property
     def base_diffusion_model(self):
@@ -262,7 +311,8 @@ class PlaceDiffusionModel:
     @property
     def vae(self):
         if self._vae is None:
-            self._vae = AutoencoderKL.from_pretrained(self.vae_model, torch_dtype=self.torch_dtype)
+            if self.base_diffusion_model.vae_model:
+                self._vae = self.base_diffusion_model.vae_model.load(torch_dtype=self.torch_dtype)
         
         return self._vae
 
@@ -273,12 +323,13 @@ class PlaceDiffusionModel:
     @property
     def device_name(self):
         return torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    
+
     @property
     def default_pipeline_kwargs(self):
         return {
             "vae": self.vae,
             "torch_dtype": self.torch_dtype,
+            **self.base_diffusion_model.pipe_extra_kwargs,
             **self.pipeline_extra_kwargs
         }
     
@@ -307,8 +358,9 @@ class PlaceDiffusionModel:
         return self._controlnets
 
     @property
-    def pipeline(self):
+    def pipeline(self) -> DiffusionPipeline:
         if self._pipeline is None:
+            
             if self.controlnet_images:
                 self._pipeline = self.base_diffusion_model\
                 .cn_pipeline_loader.from_pretrained(
@@ -331,8 +383,15 @@ class PlaceDiffusionModel:
             if self.use_dpm_scheduler:
                 self._pipeline.scheduler = DPMSolverMultistepScheduler.from_config(self._pipeline.scheduler.config)
 
-            # Melhora eficiência
-            self._pipeline.to(self.device_name)
+            # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
+            if version.parse(torch.__version__) > version.parse("2.0"):
+                self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
+            
+            if self.low_vram:
+                self._pipeline.enable_model_cpu_offload()
+            else:
+                self._pipeline.to(self.device_name)
+            
             self._pipeline.enable_vae_slicing()
             
             try:
