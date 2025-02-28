@@ -14,6 +14,8 @@ from diffusers import (
 from typing import Literal, Tuple, Any, List
 from compel import Compel
 from packaging import version
+from PIL import Image
+from utils import plot_preprocessed_image
 
 # https://docs.google.com/spreadsheets/d/1se8YEtb2detS7OuPE86fXGyD269pMycAWe2mtKUj2W8/edit?gid=0#gid=0
 # ADE20K Class -> Roads -> #8C8C8C
@@ -270,6 +272,15 @@ class BirdsEyeViewUrbanDesignScenes(LocalLoraModel):
     reference_url = "https://civitai.com/models/208499/birds-eye-view-of-urban-design-scenes"
 
 
+# Enumeracao de otimizadores
+class Optimizers:
+    DEVICE_AWARE = 0
+    UNET_TORCH_COMPILER = 1 # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
+    CPU_OFFLOAD = 2 # Pouca VRAM Não tá funcionando no colab
+    VAE_SLICING = 3
+    XFORMERS_MEMORY_ATTENTION = 4
+
+
 class PlaceDiffusionModel:
     def __init__(self, 
                  base_diffusion_model:SDHFModel=None, 
@@ -278,8 +289,13 @@ class PlaceDiffusionModel:
                  lora_model:LocalLoraModel=None,
                  use_dpm_scheduler:bool=True,
                  use_vae:bool=True,
-                 optimize_pipe:bool=True,
-                 low_vram:bool=False
+                 pipe_optimizers:List[int]=[
+                     Optimizers.DEVICE_AWARE, 
+                     Optimizers.UNET_TORCH_COMPILER, 
+                     #Optimizers.CPU_OFFLOAD, 
+                     Optimizers.VAE_SLICING, 
+                     Optimizers.XFORMERS_MEMORY_ATTENTION
+                 ],
         ):
         """
         :param base_diffusion_model: Modelo diffuser a ser utilizado. Se lora_model for definido, este modelo é ignorado.
@@ -291,7 +307,7 @@ class PlaceDiffusionModel:
         self.use_vae = use_vae
         self._vae = None
 
-        self.optimize_pipe = optimize_pipe
+        self.pipe_optimizers = pipe_optimizers
 
         self._pipeline:DiffusionPipeline = None
         self.pipeline_extra_kwargs = pipeline_extra_kwargs
@@ -305,7 +321,6 @@ class PlaceDiffusionModel:
         self.lora_model = lora_model
 
         self.use_dpm_scheduler = use_dpm_scheduler
-        self.low_vram = low_vram
 
     @property
     def base_diffusion_model(self):
@@ -345,7 +360,7 @@ class PlaceDiffusionModel:
     @property
     def valid_control_ref_images(self):
         """Imagens presentes no input controlnet_images. Exclui 0 (usado para informar que o control dessa posição não foi inputado) da listagem."""
-        return [i for i, m in self.controlnet_images if not isinstance(i, int)]
+        return [i for i, m in self.controlnet_images if isinstance(i, (Image.Image, torch.Tensor))]
 
     @property
     def valid_control_modes_index(self):
@@ -353,12 +368,17 @@ class PlaceDiffusionModel:
         Índice das imagens válidas passadas em controlnet_images. 
         Como se espera que a listagem passada segue a ordem solicitada pelo modelo, o índice é o mesmo indicado no modelo para o control_mode.
         """
-        return [m for i, m in self.controlnet_images if not isinstance(i, int)]
+        return [self.control_modes.index(m) for i, m in self.controlnet_images if isinstance(i, (Image.Image, torch.Tensor))]
 
     @property
     def control_ref_images(self):
         return [i for i, m in self.controlnet_images]
     
+    def preview_processed_images(self):
+        for i, m in self.controlnet_images:
+            if isinstance(i, (Image.Image, torch.Tensor)):
+                plot_preprocessed_image(image_tensor=i, legend=m)
+
     @property
     def controlnets(self) -> List[Any] | Any:
         if (self._controlnets is None) and self.controlnet_images:
@@ -401,26 +421,20 @@ class PlaceDiffusionModel:
             if self.use_dpm_scheduler:
                 self._pipeline.scheduler = DPMSolverMultistepScheduler.from_config(self._pipeline.scheduler.config)
 
-            if self.optimize_pipe:
-                # When using torch >= 2.0, you can improve the inference speed by 20-30% with torch.compile
-                if version.parse(torch.__version__) >= version.parse("2.0"):
-                    self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
+            if Optimizers.UNET_TORCH_COMPILER in self.pipe_optimizers:
+                self._pipeline.unet = torch.compile(self._pipeline.unet, mode="reduce-overhead", fullgraph=True)    
                 
-                if self.low_vram:
-                    try:
-                        self._pipeline.enable_model_cpu_offload()
-                    except Exception as e:
-                        print(f"Error on trying to use 'enable_model_cpu_offload'. Going back to {self.device_name}.\nError:{e}")
-                        self._pipeline.to(self.device_name)
-                else:
-                    self._pipeline.to(self.device_name)
-                
+            if Optimizers.CPU_OFFLOAD in self.pipe_optimizers:
+                self._pipeline.enable_model_cpu_offload()
+            
+            if Optimizers.DEVICE_AWARE in self.pipe_optimizers and Optimizers.CPU_OFFLOAD not in self.pipe_optimizers:
+                self._pipeline.to(self.device_name)
+            
+            if Optimizers.VAE_SLICING in self.pipe_optimizers:
                 self._pipeline.enable_vae_slicing()
-                
-                try:
-                    self._pipeline.enable_xformers_memory_efficient_attention()
-                except Exception as e:
-                    print(e)
+            
+            if Optimizers.XFORMERS_MEMORY_ATTENTION in self.pipe_optimizers:
+                self._pipeline.enable_xformers_memory_efficient_attention()
 
         return self._pipeline
 
