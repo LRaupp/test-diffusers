@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+from controlnet_aux import CannyDetector, MidasDetector
 from PIL import Image
 
 def plot_preprocessed_image(image_tensor, legend:str=""):
@@ -88,11 +89,8 @@ def apply_palette(image_path, target_size=(256, 256)):
     :param target_size: Tuple (width, height) for resizing (default: (256, 256)).
     :return: Processed PIL image with the new colors.
     """
-    # Load image and convert to RGB
-    image = Image.open(image_path).convert("RGB")
-
     # Resize the image (same as in preprocess_image)
-    image = image.resize(target_size, Image.Resampling.LANCZOS)
+    image = prepare_input(image=image_path, target_size=target_size).convert("RGB")
 
     # Convert image to NumPy array (without normalization)
     image_array = np.array(image, dtype=np.uint8)
@@ -117,3 +115,53 @@ def apply_palette(image_path, target_size=(256, 256)):
     plt.show()
 
     return new_image
+
+def process_canny_edges(original_image):
+    """Process Canny edge detection"""
+    return CannyDetector()(original_image)
+
+def process_depth_map(original_image):
+    """Process depth map with proper initialization"""
+    midas = MidasDetector.from_pretrained("lllyasviel/Annotators")
+    return midas(original_image)
+
+def prepare_input(image, target_size, fit_to='height'):
+    """
+    Aspect-preserving resize with center crop
+    Args:
+        image: PIL.Image - Input image to process
+        target_size: tuple - (width, height) of output
+        fit_to: str - 'height' or 'width' to prioritize dimension
+    Returns:
+        PIL.Image: Processed image
+    """
+    image = Image.open(image)
+    original_width, original_height = image.size
+    target_width, target_height = target_size
+
+    # Calculate scaling based on chosen dimension
+    if fit_to == 'height':
+        scale = target_height / original_height
+    else:  # width
+        scale = target_width / original_width
+
+    # Calculate new dimensions
+    new_width = int(original_width * scale)
+    new_height = int(original_height * scale)
+
+    # Resize first
+    resized = image.resize((new_width, new_height), Image.LANCZOS)
+
+    # Calculate crop coordinates
+    if fit_to == 'height':
+        left = (new_width - target_width) // 2
+        top = 0
+        right = left + target_width
+        bottom = target_height
+    else:
+        left = 0
+        top = (new_height - target_height) // 2
+        right = target_width
+        bottom = top + target_height
+
+    return resized.crop((left, top, right, bottom))
